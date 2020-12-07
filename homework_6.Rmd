@@ -1,0 +1,158 @@
+---
+title: "Homework 6"
+author: "Caroline Andy"
+date: "12/6/2020"
+output: html_document
+---
+
+### Problem 1
+
+```{r load, warning = FALSE, message = FALSE}
+library(purrr)
+library(tidyverse)
+library(stringr)
+library(patchwork)
+library(skimr)
+
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = .6,
+  out.width = "90%"
+)
+```
+
+```{r}
+#generate homicide table and summarize solved and unsolved murders by state
+urlfile = "https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv"
+homicide = read_csv(url(urlfile)) %>%
+  mutate(city_state = str_c(city, state, sep = "_"),
+         victim_age = as.numeric(victim_age),
+         resolution = case_when(
+           disposition %in% "Closed without arrest" ~ 1,
+           disposition %in% "Closed by arrest" ~ 0, 
+           disposition %in% "Open/No arrest" ~ 0)) %>%
+  filter(
+    victim_race %in% c("White", "Black"),
+    city_state != "Tulsa_AL") %>%
+  select(city_state, resolution, victim_age, victim_race, victim_sex)
+```
+
+Start with one city.
+
+```{r}
+baltimore_df = 
+  homicide %>%
+  filter(city_state == "Baltimore_MD")
+
+glm(resolution ~ victim_age + victim_race + victim_sex, 
+    data = baltimore_df, 
+    family = binomial()) %>%
+  broom::tidy() %>%
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>%
+  select(term, OR, starts_with("CI")) %>%
+  knitr::kable(digits = 3)
+```
+
+Try this across cities.
+
+```{r}
+model_results_df = 
+  homicide %>%
+  nest(data = -city_state) %>%
+  mutate(
+    models = 
+      map(.x = data, ~glm(resolution ~ victim_age + victim_race + victim_sex, data = .x, family = binomial())),
+    results = map(models, broom::tidy)
+) %>%
+  select(city_state, results) %>%
+  unnest(results) %>%
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error)
+  ) %>%
+  select(city_state, term, OR, starts_with("CI"))
+```
+
+```{r}
+model_results_df %>%
+  filter(term == "victim_sexMale") %>%
+  mutate(city_state = fct_reorder(city_state, OR)) %>%
+  ggplot(aes(x = city_state, y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Problem 2
+
+Make 3 models (2 specified, 1 that is our choice) and compare them. Can pick and choose variables to include in model (if we specify why). 
+
+Note:
+we can graph residuals against x values to see if there are any trends in residuals (ie. low x values tend to have higher residuals, etc) 
+
+```{r, message = FALSE, warning = FALSE}
+bweight = read_csv("./birthweight.csv")
+skim(bweight) 
+# no missing values, all variables are numeric
+
+bweight = bweight %>%
+  mutate(babysex = (fct_infreq(as.factor(babysex))),
+         frace = (fct_infreq(as.factor(frace))),
+         mrace = (fct_infreq(as.factor(mrace))),
+         malform = (fct_infreq(as.factor(malform)))) 
+
+reg = lm(bwt ~ blength + gaweeks + malform + pnumlbw + smoken + mrace + parity, data = bweight)
+reg %>% 
+  broom::glance()
+summary(reg)
+
+reg2 = lm(bwt ~ ., data = bweight)
+reg2 %>% 
+  broom::glance()
+summary(reg2)
+
+library(leaps)
+b<-regsubsets(bwt ~ ., data=bweight)
+   (rs<-summary(b))
+
+## function for backward stepwise selection
+mult.fit <- lm(bwt ~ ., data=bweight)
+step(mult.fit, direction='backward')
+
+reg3 = lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
+    mheight + mrace + parity + ppwt + smoken, data=bweight)
+reg3 %>%
+  broom::glance()
+summary(reg3)
+
+reg3 %>% 
+  broom::tidy() %>% 
+  select(term, estimate, p.value) %>% 
+  knitr::kable(digits = 3)
+```
+
+
+Compare models to two models:
+- One using length at birth and gestational age as predictors 
+- One using head circumference, length, sex and all interactions as predictors (for interactions can just do: circumference*length*sex)
+
+```{r, message = FALSE, warning = FALSE}
+## Predictors = length and gesitational age 
+length_gest = lm(bwt ~ blength + gaweeks, data = bweight)
+length_gest %>%
+  broom::glance()
+summary(length_gest)
+## Adjusted R squared = 0.5767
+
+## Predictors = head circumference, length, sex and all interactions
+length_circ_sex = lm(bwt ~ blength*bhead*babysex, data = bweight)
+length_circ_sex %>%
+  broom::glance()
+summary(length_circ_sex)
+## Adjusted R squared = 0.6844 
+```
