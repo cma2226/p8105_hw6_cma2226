@@ -13,6 +13,7 @@ library(tidyverse)
 library(stringr)
 library(patchwork)
 library(skimr)
+library(modelr)
 
 knitr::opts_chunk$set(
   fig.width = 6,
@@ -92,8 +93,6 @@ model_results_df %>%
 
 Make 3 models (2 specified, 1 that is our choice) and compare them. Can pick and choose variables to include in model (if we specify why). 
 
-Note:
-we can graph residuals against x values to see if there are any trends in residuals (ie. low x values tend to have higher residuals, etc) 
 
 ```{r, message = FALSE, warning = FALSE}
 bweight = read_csv("./birthweight.csv")
@@ -106,36 +105,28 @@ bweight = bweight %>%
          mrace = (fct_infreq(as.factor(mrace))),
          malform = (fct_infreq(as.factor(malform)))) 
 
-reg = lm(bwt ~ blength + gaweeks + malform + pnumlbw + smoken + mrace + parity, data = bweight)
-reg %>% 
-  broom::glance()
-summary(reg)
-
-reg2 = lm(bwt ~ ., data = bweight)
-reg2 %>% 
-  broom::glance()
-summary(reg2)
-
-library(leaps)
-b<-regsubsets(bwt ~ ., data=bweight)
-   (rs<-summary(b))
-
 ## function for backward stepwise selection
-mult.fit <- lm(bwt ~ ., data=bweight)
-step(mult.fit, direction='backward')
+mult.fit <- lm(bwt ~ ., data = bweight)
+step(mult.fit, direction = 'backward')
 
-reg3 = lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
-    mheight + mrace + parity + ppwt + smoken, data=bweight)
-reg3 %>%
-  broom::glance()
-summary(reg3)
+reg = lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
+    mheight + mrace + parity + ppwt + smoken, data = bweight)
 
-reg3 %>% 
+reg %>% 
   broom::tidy() %>% 
   select(term, estimate, p.value) %>% 
   knitr::kable(digits = 3)
 ```
 
+We can graph residuals against x values to see if there are any trends in residuals (ie. low x values tend to have higher residuals, etc) 
+
+Show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+
+```{r, message = FALSE, warning = FALSE}
+bweight = modelr::add_residuals(bweight, reg)
+modelr::add_predictions(bweight, reg) %>%
+  ggplot(aes(x = resid, y = pred)) + geom_point()
+```
 
 Compare models to two models:
 - One using length at birth and gestational age as predictors 
@@ -155,4 +146,95 @@ length_circ_sex %>%
   broom::glance()
 summary(length_circ_sex)
 ## Adjusted R squared = 0.6844 
+```
+
+```{r, message = FALSE, warning = FALSE}
+cv_df = 
+  crossv_mc(bweight, 4342) 
+train = cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
+test = cv_df %>% pull(test) %>% .[[1]] %>% as_tibble
+
+cv_df =
+  cv_df %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+    my_mod  = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
+    mheight + mrace + parity + ppwt + smoken, data = .x)),
+    length_ga_mod  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    length_circ_sex_mod = map(train, ~lm(bwt ~ blength*bhead*babysex, data = .x))) %>% 
+  mutate(
+    rmse_mymod = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_length_ga_mod = map2_dbl(length_ga_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_length_circ_sex_mod = map2_dbl(length_circ_sex_mod, test, ~rmse(model = .x, data = .y)))
+```
+
+```{r, message = FALSE, warning = FALSE}
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+### Problem 3
+
+```{r message = FALSE, warning = FALSE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+
+# regression model for 1 (weather_df) sample
+lm(tmax ~ tmin, data = weather_df) %>% 
+  broom::tidy() %>% 
+  knitr::kable(digits = 3)
+```
+
+```{r, message = FALSE, warning = FALSE}
+# draw one bootstrap sample
+boot_sample = function(df) {
+  sample_frac(weather_df, replace = TRUE)
+}
+
+# draw 5000 bootstrap samples
+boot_straps = 
+  data_frame(
+    strap_number = 1:5000,
+    strap_sample = rerun(5000, boot_sample(weather_df))
+  )
+
+# running regression models using 5000 bootstrap samples 
+bootstrap_results = 
+  boot_straps %>% 
+  mutate(
+    models = map(strap_sample, ~lm(tmax ~ tmin, data = .x) ),
+    results = map(models, broom::glance)) %>% 
+  select(strap_number, results) %>% 
+  unnest(results) 
+
+# find mean r squared
+bootstrap_results %>%
+  summarize(mean_r_sq = mean(r.squared))
+```
+
+
+```{r, message = FALSE, warning = FALSE}
+
+
 ```
