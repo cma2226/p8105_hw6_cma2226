@@ -103,8 +103,6 @@ model_results_df %>%
 
 ### Problem 2
 
-Make 3 models (2 specified, 1 that is our choice) and compare them. Can pick and choose variables to include in model (if we specify why). 
-
 In this problem, I will analyze data gathered to understand the effects of several variables on a child’s birthweight. This dataset consists of roughly 4000 children and includes 20 variables, including baby sex, head circumference, length, gestational age, and mother's age, age at menarche, height, race and previous pregnancy outcomes. 
 
 Here I will load and clean the data for regression analysis, converting numeric variables to factor variables where appropriate, and checking for missing values. 
@@ -139,7 +137,7 @@ reg %>%
   knitr::kable(digits = 3)
 ```
 
-Describe your modeling process and show a plot of model residuals against fitted values – use add_predictions and add_residuals in making this plot.
+Backward selection is a method of model variable selection in which the least significant predictors are sequentially removed from the model until only significant predictors remain. This is the approach I adopted in developing my linear regression model. 
 
 We can graph residuals against x values to see if there are any trends in residuals (ie. low x values tend to have higher residuals, etc).
 
@@ -149,50 +147,55 @@ modelr::add_predictions(bweight, reg) %>%
   ggplot(aes(x = pred, y = resid)) + geom_point()
 ```
 
-While most values are centered around a residual value of 0 and predicted value between 2500 and 3500, we can see in the above plot that lower predicted values tend to have higher residual values. 
+The plot illustrates the majority of values as being centered around a residual value of 0 and predicted value between 2500 and 3500. As the predicted weight values get very small, however, we see higher residual values, which suggest that this model performs well for average and above average weight babies, but not as well for lower weight babies. 
 
-Now I will compare this model to two other models: (1) a simple model containing only baby length and gestational week as predictors, and (2) a model containing baby length, head circumference, sex, and the three-way interactions of these variables. 
+Now I will generate two additional models to compare my model to. These include: (1) a simple model containing only baby length and gestational week as predictors, and (2) a model containing baby length, head circumference, sex, and the three-way interactions of these variables. 
 
 ```{r, message = FALSE, warning = FALSE}
 ## Predictors = length and gesitational age 
-length_gest = lm(bwt ~ blength + gaweeks, data = bweight)
-length_gest %>%
+simple = lm(bwt ~ blength + gaweeks, data = bweight)
+simple %>%
   broom::glance()
-summary(length_gest)
+summary(simple)
 ## Adjusted R squared = 0.5767
 
 ## Predictors = head circumference, length, sex and all interactions
-length_circ_sex = lm(bwt ~ blength*bhead*babysex, data = bweight)
-length_circ_sex %>%
+interaction = lm(bwt ~ blength*bhead*babysex, data = bweight)
+interaction %>%
   broom::glance()
-summary(length_circ_sex)
+summary(interaction)
 ## Adjusted R squared = 0.6844 
 ```
 
+Now I will compare these models in terms of the cross-validated prediction error.
+
 ```{r, message = FALSE, warning = FALSE}
+# use crossv_mc function to partition the data for a test-training split
 cv_df = 
   crossv_mc(bweight, 4342) 
-train = cv_df %>% pull(train) %>% .[[1]] %>% as_tibble
-test = cv_df %>% pull(test) %>% .[[1]] %>% as_tibble
 
+# format the training and testing data as tibbles
 cv_df =
   cv_df %>% 
   mutate(
     train = map(train, as_tibble),
     test = map(test, as_tibble))
 
+# generate model outputs and rmse for each model
 cv_df = 
   cv_df %>% 
   mutate(
-    length_ga_mod  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
-    length_circ_sex_mod = map(train, ~lm(bwt ~ blength*bhead*babysex, data = .x)), 
+    simple_mod  = map(train, ~lm(bwt ~ blength + gaweeks, data = .x)),
+    interaction_mod = map(train, ~lm(bwt ~ blength*bhead*babysex, data = .x)), 
     my_mod  = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
     mheight + mrace + parity + ppwt + smoken, data = .x))) %>% 
   mutate(
-    rmse_simple = map2_dbl(length_ga_mod, test, ~rmse(model = .x, data = .y)),
-    rmse_interaction = map2_dbl(length_circ_sex_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_simple = map2_dbl(simple_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_interaction = map2_dbl(interaction_mod, test, ~rmse(model = .x, data = .y)),
     rmse_backward_step = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)))
 ```
+
+Now I will generate a plot of model residuals against fitted values. 
 
 ```{r, message = FALSE, warning = FALSE}
 cv_df %>% 
@@ -203,12 +206,19 @@ cv_df %>%
     values_to = "rmse",
     names_prefix = "rmse_") %>% 
   mutate(model = fct_inorder(model)) %>% 
-  ggplot(aes(x = model, y = rmse)) + geom_violin()
+  ggplot(aes(x = model, y = rmse)) + geom_violin() +
+  labs(
+    title = "RMSE by model",
+    x = "Model type",
+    y = "RMSE"
+  )
 ```
 
-Lowest RMSE is preferred. 
+As we can see from this plot, the plot made through backward stepwise selection has the lowest RMSE. Thus, this model performs the best in predicting baby weight. 
 
 ### Problem 3
+
+For this problem, I will use a dataset documenting weather observed in Central Park. We are interested in predicting the daily reported temperature maximum using the reported temperature minimum as a predictor.
 
 ```{r message = FALSE, warning = FALSE}
 weather_df = 
@@ -229,6 +239,8 @@ lm(tmax ~ tmin, data = weather_df) %>%
   knitr::kable(digits = 3)
 ```
 
+I will use 5000 bootstrap samples to generate estimates for $\hat r^2$ and $log(\beta_0*\beta_1)$ for each bootstrap. 
+
 ```{r, message = FALSE, warning = FALSE}
 # draw one bootstrap sample
 set.seed(1)
@@ -244,7 +256,7 @@ boot_straps =
     strap_sample = rerun(5000, boot_sample(weather_df))
   )
 
-# running regression models using 5000 bootstrap samples 
+# run regression models on 5000 bootstrap samples 
 bootstrap_results = 
   boot_straps %>% 
   mutate(
@@ -253,11 +265,19 @@ bootstrap_results =
     results2 = map(models, broom::tidy)) %>% 
   select(strap_number, results1, results2) %>% 
   unnest(results1, results2) 
+```
 
-# find mean r squared
+The mean $\hat r^2$ over all bootstrap samples is calculated as follows:
+
+```{r, message = FALSE, warning = FALSE}
+# find mean r squared over all bootstrap samples
 bootstrap_results %>%
   summarize(mean_r_sq = mean(r.squared))
+```
 
+Now I will generate the $log(\beta_0*\beta_1)$ variable using estimates for $\beta_0$ and $\beta_1$ for each bootstrap.
+
+```{r, message = FALSE, warning = FALSE}
 # generate log(B0*B1) variable
 btstrap_log_data = 
   bootstrap_results %>%
@@ -270,7 +290,13 @@ btstrap_log_data =
   mutate(
     log_var = log(B0*B1)
   )
+
+# find log(B0*B1) over all bootstrap samples
+btstrap_log_data %>%
+  summarize(mean_log_var = mean(log_var))
 ```
+
+Now I will generate a plot of the distribution of the r squared estimate over all bootstrap samples. 
 
 ```{r, message = FALSE, warning = FALSE}
 bootstrap_results %>%
@@ -278,13 +304,19 @@ bootstrap_results %>%
   geom_density(alpha = .4, adjust = .5, color = "blue")
 ```
 
+DESCRIBE PLOT IN WORDS: Normal, r^2 is maybe skewed left? 
+
+Now I will generate a plot of the distribution of the $log(\beta_0*\beta_1)$ estimate over all bootstrap samples. 
+
 ```{r, message = FALSE, warning = FALSE}
 btstrap_log_data %>%
   ggplot(aes(x = log_var)) +
   geom_density(alpha = .4, adjust = .5, color = "blue")
 ```
 
-Using the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for r̂ 2 and log(β̂ 0∗β̂ 1).
+DESCRIBE PLOT IN WORDS
+
+Using the 5000 bootstrap estimates, I will now identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $\hat r^2$2 and $log(\beta_0*\beta_1)$1).
 
 ```{r, message = FALSE, warning = FALSE}
 ## r^2 95% CI
@@ -293,10 +325,10 @@ bootstrap_results %>%
     ci_lower = quantile(r.squared, 0.025), 
     ci_upper = quantile(r.squared, 0.975))
 
+## log(B0*B1) 95% CI
 btstrap_log_data %>% 
   summarize(
     ci_lower = quantile(log_var, 0.025), 
     ci_upper = quantile(log_var, 0.975))
 ```
 
-Normal, r^2 is maybe skewed left? 
