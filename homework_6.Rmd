@@ -2,7 +2,7 @@
 title: "Homework 6"
 author: "Caroline Andy"
 date: "12/6/2020"
-output: html_document
+output: github_document
 ---
 
 ### Problem 1
@@ -22,7 +22,9 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r}
+For this problem, I will use a dataset containing reported homicides in 50 large U.S. cities. I will first clean the data, creating a city-state variable, revaluing disposition, and removing cities that do not report homicide race data. 
+
+```{r, warning = FALSE, message = FALSE}
 #generate homicide table and summarize solved and unsolved murders by state
 homicide = 
   read_csv("homicide-data.csv", na = c("", "NA", "Unknown")) %>%
@@ -44,13 +46,11 @@ homicide =
     victim_sex = as.character(victim_sex)
   ) %>%
   select(city_state, resolution, victim_age, victim_race, victim_sex)
-
-skim(homicide)
 ```
 
-Start with one city.
+Now I will use the glm function to fit a logistic regression with resolved vs unresolved as the outcome and victim age, sex and race as predictors for the city of Baltimore, MD, 
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 baltimore_df = 
   homicide %>%
   filter(city_state == "Baltimore, MD")
@@ -68,15 +68,15 @@ glm(resolution ~ victim_age + victim_race + victim_sex,
   knitr::kable(digits = 3)
 ```
 
-Try this across cities.
+Now I will run glm for each of the cities in my dataset, and extract the adjusted odds ratio and confidence interval (CI) for solving homicides comparing Black victims to White victims.
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 model_results_df = 
   homicide %>%
   nest(data = -city_state) %>%
   mutate(
     models = 
-      map(.x = data, ~glm(resolution ~ victim_age+victim_sex, data = .x, family = binomial())),
+      map(.x = data, ~glm(resolution ~ victim_age + victim_sex + victim_race, data = .x, family = binomial())),
     results = map(models, broom::tidy)
 ) %>%
   select(city_state, results) %>%
@@ -87,19 +87,21 @@ model_results_df =
     CI_upper = exp(estimate + 1.96 * std.error)
   ) %>%
   select(city_state, term, OR, starts_with("CI"))
-
-summary(homicide)
 ```
 
-```{r}
+The below plot shows the estimated odds ratios and CIs for White race (as compared to Black race as the reference category) for each city.
+
+```{r, warning = FALSE, message = FALSE}
 model_results_df %>%
-  filter(term == "victim_sexMale") %>%
+  filter(term == "victim_raceWhite") %>%
   mutate(city_state = fct_reorder(city_state, OR)) %>%
   ggplot(aes(x = city_state, y = OR)) +
   geom_point() +
   geom_errorbar(aes(ymin = CI_lower, ymax = CI_upper)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1))
 ```
+
+Overall, these results show that White race is associated with 2.320 times the odds of having a resolved homicide as compared to Black race. In particular, this disparity is the largest in Boston, MA, where white race is associated with over 10 times the odds of having a resolved homicide as compared to Black race. This disparity is the lowest in Tampa, Florida.
 
 ### Problem 2
 
@@ -130,16 +132,23 @@ step(mult.fit, direction = 'backward')
 ## final proposed model based on backward stepwise selection: 
 reg = lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + 
     mheight + mrace + parity + ppwt + smoken, data = bweight)
-
-reg %>% 
-  broom::tidy() %>% 
-  select(term, estimate, p.value) %>% 
-  knitr::kable(digits = 3)
 ```
 
-Backward selection is a method of model variable selection in which the least significant predictors are sequentially removed from the model until only significant predictors remain. This is the approach I adopted in developing my linear regression model. 
+Backward selection is a method of model variable selection in which the least significant predictors are sequentially removed from the model until only significant predictors remain. This is the approach I adopted in developing my linear regression model. My final model contains the following predictors:
 
-We can graph residuals against x values to see if there are any trends in residuals (ie. low x values tend to have higher residuals, etc).
+- baby sex
+- baby head circumference
+- baby length
+- mother's weight at delivery
+- family monthly income
+- gestational age
+- mother's height
+- mother's race
+- number of lives births prior to this pregnancy
+- mother's pre-pregnancy weight, and 
+- average number of cigarettes smoked per day during pregnancy
+
+We can graph the residuals against x values to see if there are any emergent trends.
 
 ```{r, message = FALSE, warning = FALSE}
 bweight = modelr::add_residuals(bweight, reg)
@@ -147,7 +156,7 @@ modelr::add_predictions(bweight, reg) %>%
   ggplot(aes(x = pred, y = resid)) + geom_point()
 ```
 
-The plot illustrates the majority of values as being centered around a residual value of 0 and predicted value between 2500 and 3500. As the predicted weight values get very small, however, we see higher residual values, which suggest that this model performs well for average and above average weight babies, but not as well for lower weight babies. 
+The plot shows that the majority of values are centered around a residual value of 0 within the range of predicted values between 2000 and 4000. There is no pattern in the residuals for this range of x values. As the predicted weight values get very small, however, we see higher residual values. This suggests that this model may perform well for average and above average weight babies, but not as well for lower weight babies. 
 
 Now I will generate two additional models to compare my model to. These include: (1) a simple model containing only baby length and gestational week as predictors, and (2) a model containing baby length, head circumference, sex, and the three-way interactions of these variables. 
 
@@ -156,14 +165,12 @@ Now I will generate two additional models to compare my model to. These include:
 simple = lm(bwt ~ blength + gaweeks, data = bweight)
 simple %>%
   broom::glance()
-summary(simple)
 ## Adjusted R squared = 0.5767
 
 ## Predictors = head circumference, length, sex and all interactions
 interaction = lm(bwt ~ blength*bhead*babysex, data = bweight)
 interaction %>%
   broom::glance()
-summary(interaction)
 ## Adjusted R squared = 0.6844 
 ```
 
@@ -195,7 +202,7 @@ cv_df =
     rmse_backward_step = map2_dbl(my_mod, test, ~rmse(model = .x, data = .y)))
 ```
 
-Now I will generate a plot of model residuals against fitted values. 
+Now I will generate a plot of model residuals against fitted values for each model. 
 
 ```{r, message = FALSE, warning = FALSE}
 cv_df %>% 
@@ -214,13 +221,13 @@ cv_df %>%
   )
 ```
 
-As we can see from this plot, the plot made through backward stepwise selection has the lowest RMSE. Thus, this model performs the best in predicting baby weight. 
+As we can see from this plot, the model made through backward stepwise selection has the lowest RMSE. Thus, this model has the best performance in predicting baby weight. While the simple model is the most parsimonious, its RMSE is substantially higher than the other two models. The interaction model not only has a higher RMSE than the backward stepwise selection model, but it also is less easily interpretable as it involves the threeway interactions between baby head circumference, length, sex. 
 
 ### Problem 3
 
-For this problem, I will use a dataset documenting weather observed in Central Park. We are interested in predicting the daily reported temperature maximum using the reported temperature minimum as a predictor.
+For this problem, I will use a dataset documenting weather observed in Central Park. We are interested in predicting the daily reported temperature maximum using the reported temperature minimum as a predictor. First I will load and clean the dataset, and generate a simple linear regression model containing mininum temperature as the predictor and maximum temperature as the outcome. 
 
-```{r message = FALSE, warning = FALSE}
+```{r, message = FALSE, warning = FALSE}
 weather_df = 
   rnoaa::meteo_pull_monitors(
     c("USW00094728"),
@@ -239,7 +246,7 @@ lm(tmax ~ tmin, data = weather_df) %>%
   knitr::kable(digits = 3)
 ```
 
-I will use 5000 bootstrap samples to generate estimates for $\hat r^2$ and $log(\beta_0*\beta_1)$ for each bootstrap. 
+Now I will draw 5000 bootstrap samples from the weather dataset, and will run the above linear regression model on each dataset to generate estimates for $\hat r^2$ and $log(\beta_0*\beta_1)$ for each bootstrap. 
 
 ```{r, message = FALSE, warning = FALSE}
 # draw one bootstrap sample
@@ -267,7 +274,7 @@ bootstrap_results =
   unnest(results1, results2) 
 ```
 
-The mean $\hat r^2$ over all bootstrap samples is calculated as follows:
+We may calculate the mean $\hat r^2$ over all bootstrap samples as follows:
 
 ```{r, message = FALSE, warning = FALSE}
 # find mean r squared over all bootstrap samples
@@ -275,7 +282,7 @@ bootstrap_results %>%
   summarize(mean_r_sq = mean(r.squared))
 ```
 
-Now I will generate the $log(\beta_0*\beta_1)$ variable using estimates for $\beta_0$ and $\beta_1$ for each bootstrap.
+Now I will generate the $log(\beta_0*\beta_1)$ variable using estimates for $\beta_0$ and $\beta_1$ for each bootstrap sample.
 
 ```{r, message = FALSE, warning = FALSE}
 # generate log(B0*B1) variable
@@ -290,7 +297,11 @@ btstrap_log_data =
   mutate(
     log_var = log(B0*B1)
   )
+```
 
+We may calculate the mean $log(\beta_0*\beta_1)$ over all bootstrap samples as follows:
+
+```{r, message = FALSE, warning = FALSE}
 # find log(B0*B1) over all bootstrap samples
 btstrap_log_data %>%
   summarize(mean_log_var = mean(log_var))
@@ -304,7 +315,7 @@ bootstrap_results %>%
   geom_density(alpha = .4, adjust = .5, color = "blue")
 ```
 
-DESCRIBE PLOT IN WORDS: Normal, r^2 is maybe skewed left? 
+The density plot of r squared estimates is centered around 0.91, which is consistent with the calculated mean estimate, 0.9113306. The distribution of the r squared estimate appears to be normal, though shows heavy tails and slight left skewness.
 
 Now I will generate a plot of the distribution of the $log(\beta_0*\beta_1)$ estimate over all bootstrap samples. 
 
@@ -314,9 +325,9 @@ btstrap_log_data %>%
   geom_density(alpha = .4, adjust = .5, color = "blue")
 ```
 
-DESCRIBE PLOT IN WORDS
+The density plot of $log(\beta_0*\beta_1)$ estimates is centered around 2.01, which is consistent with the calculated mean estimate, 2.013103. The distribution of the $log(\beta_0*\beta_1)$ estimate appears to be normal.
 
-Using the 5000 bootstrap estimates, I will now identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $\hat r^2$2 and $log(\beta_0*\beta_1)$1).
+Using the 5000 bootstrap estimates, I will now identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $\hat r^2$ and $log(\beta_0*\beta_1)$.
 
 ```{r, message = FALSE, warning = FALSE}
 ## r^2 95% CI
@@ -332,3 +343,4 @@ btstrap_log_data %>%
     ci_upper = quantile(log_var, 0.975))
 ```
 
+Thus, the mean estimate and 95% confidence interval for $\hat r^2$ is 0.9113306 (0.8936684, 0.927106). The mean estimate and 95% confidence interval for $log(\beta_0*\beta_1)$ is 2.013103 (1.964949, 2.058887). 
